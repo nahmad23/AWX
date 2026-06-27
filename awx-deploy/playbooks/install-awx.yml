@@ -45,11 +45,25 @@
       when: not k3s_bin.stat.exists
       changed_when: true
 
-    - name: Wait for k3s node to be Ready
+    - name: Wait for the k3s service to be active
+      ansible.builtin.service:
+        name: k3s
+        state: started
+        enabled: true
+
+    # Right after install the API server takes ~30-60s to come up and
+    # register the node, so poll until a node reports Ready rather than
+    # using a one-shot `kubectl wait` (which errors when 0 nodes exist).
+    - name: Wait for the k3s node to register and become Ready
       ansible.builtin.shell: |
-        k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+        set -o pipefail
+        k3s kubectl get nodes --no-headers 2>/dev/null | awk '$2 == "Ready"' | wc -l
       args:
         executable: /bin/bash
+      register: k3s_ready_nodes
+      retries: 30
+      delay: 10
+      until: k3s_ready_nodes.stdout | trim | int > 0
       changed_when: false
 
     - name: Point kubeconfig env at the k3s config
