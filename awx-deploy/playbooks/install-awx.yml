@@ -102,13 +102,44 @@
       register: operator_apply
       changed_when: "'created' in operator_apply.stdout or 'configured' in operator_apply.stdout"
 
-    - name: Wait for the AWX Operator deployment to be available
-      ansible.builtin.shell: |
-        export KUBECONFIG={{ kubeconfig_path }}
-        k3s kubectl -n {{ awx_namespace }} rollout status deploy/awx-operator-controller-manager --timeout=300s
-      args:
-        executable: /bin/bash
-      changed_when: false
+    - name: Wait for the AWX Operator (with diagnostics on failure)
+      block:
+        - name: Wait for the AWX Operator deployment to be available
+          ansible.builtin.shell: |
+            export KUBECONFIG={{ kubeconfig_path }}
+            k3s kubectl -n {{ awx_namespace }} rollout status \
+              deploy/awx-operator-controller-manager --timeout=600s
+          args:
+            executable: /bin/bash
+          changed_when: false
+      rescue:
+        - name: Collect AWX Operator diagnostics
+          ansible.builtin.shell: |
+            set -o pipefail
+            export KUBECONFIG={{ kubeconfig_path }}
+            echo "===== PODS ====="
+            k3s kubectl -n {{ awx_namespace }} get pods -o wide
+            echo "===== POD DESCRIBE ====="
+            k3s kubectl -n {{ awx_namespace }} describe pod -l control-plane=controller-manager
+            echo "===== RECENT EVENTS ====="
+            k3s kubectl -n {{ awx_namespace }} get events --sort-by=.lastTimestamp | tail -30
+          args:
+            executable: /bin/bash
+          register: operator_diag
+          changed_when: false
+
+        - name: Show AWX Operator diagnostics
+          ansible.builtin.debug:
+            var: operator_diag.stdout_lines
+
+        - name: Fail with guidance
+          ansible.builtin.fail:
+            msg: >-
+              The AWX Operator pod did not become Ready. Check the diagnostics
+              above: ImagePullBackOff -> registry/network issue pulling
+              quay.io/ansible/awx-operator:{{ awx_operator_version }};
+              Pending -> insufficient CPU/RAM; CrashLoopBackOff -> see the
+              pod logs. Re-running the playbook resumes from here.
 
     # -------- AWX admin password secret --------
     - name: Create the AWX admin password secret
