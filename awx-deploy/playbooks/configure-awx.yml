@@ -23,9 +23,6 @@
     controller_password: "{{ awx_admin_password }}"
     controller_validate_certs: false
 
-  collections:
-    - awx.awx
-
   tasks:
     - name: Ensure the organization exists
       awx.awx.organization:
