@@ -1,0 +1,146 @@
+---
+# ==================================================================
+# Deploy AWX on an Ubuntu server using k3s + the AWX Operator.
+#
+# Run from a control machine that can SSH to the server:
+#   ansible-playbook playbooks/install-awx.yml \
+#       -e @group_vars/secrets.yml --ask-vault-pass
+#
+# Result: AWX web UI at  http://192.168.27.162:30080
+#         user: admin   password: {{ awx_admin_password }}
+# ==================================================================
+- name: Deploy AWX on Ubuntu (k3s + AWX Operator)
+  hosts: awx_server
+  become: true
+  vars_files:
+    - ../group_vars/all.yml
+
+  tasks:
+    - name: Ensure base packages are present
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - apt-transport-https
+          - ca-certificates
+          - python3-pip
+          - python3-kubernetes
+        state: present
+        update_cache: true
+
+    # -------- k3s (single-node Kubernetes) --------
+    - name: Check if k3s is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_bin
+
+    - name: Install k3s
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+      args:
+        executable: /bin/bash
+      when: not k3s_bin.stat.exists
+
+    - name: Wait for k3s node to be Ready
+      ansible.builtin.shell: |
+        k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Point kubeconfig env at the k3s config
+      ansible.builtin.set_fact:
+        kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+
+    # -------- AWX Operator via kustomize --------
+    - name: Create the AWX Operator kustomize directory
+      ansible.builtin.file:
+        path: /root/awx-operator
+        state: directory
+        mode: "0755"
+
+    - name: Render kustomization for the AWX Operator
+      ansible.builtin.copy:
+        dest: /root/awx-operator/kustomization.yaml
+        mode: "0644"
+        content: |
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - github.com/ansible/awx-operator/config/default?ref={{ awx_operator_version }}
+          images:
+            - name: quay.io/ansible/awx-operator
+              newTag: {{ awx_operator_version }}
+          namespace: {{ awx_namespace }}
+
+    - name: Apply the AWX Operator
+      ansible.builtin.shell: |
+        set -o pipefail
+        export KUBECONFIG={{ kubeconfig_path }}
+        k3s kubectl create namespace {{ awx_namespace }} --dry-run=client -o yaml | k3s kubectl apply -f -
+        k3s kubectl apply -k /root/awx-operator
+      args:
+        executable: /bin/bash
+      register: operator_apply
+      changed_when: "'created' in operator_apply.stdout or 'configured' in operator_apply.stdout"
+
+    - name: Wait for the AWX Operator deployment to be available
+      ansible.builtin.shell: |
+        export KUBECONFIG={{ kubeconfig_path }}
+        k3s kubectl -n {{ awx_namespace }} rollout status deploy/awx-operator-controller-manager --timeout=300s
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    # -------- AWX admin password secret --------
+    - name: Create the AWX admin password secret
+      ansible.builtin.shell: |
+        export KUBECONFIG={{ kubeconfig_path }}
+        k3s kubectl -n {{ awx_namespace }} create secret generic {{ awx_instance_name }}-admin-password \
+          --from-literal=password='{{ awx_admin_password }}' \
+          --dry-run=client -o yaml | k3s kubectl apply -f -
+      args:
+        executable: /bin/bash
+      no_log: true
+      changed_when: false
+
+    # -------- AWX instance (Custom Resource) --------
+    - name: Render the AWX instance manifest
+      ansible.builtin.copy:
+        dest: /root/awx-instance.yaml
+        mode: "0644"
+        content: |
+          apiVersion: awx.ansible.com/v1beta1
+          kind: AWX
+          metadata:
+            name: {{ awx_instance_name }}
+            namespace: {{ awx_namespace }}
+          spec:
+            service_type: nodeport
+            nodeport_port: {{ awx_nodeport }}
+            admin_user: {{ awx_admin_user }}
+            admin_password_secret: {{ awx_instance_name }}-admin-password
+
+    - name: Deploy the AWX instance
+      ansible.builtin.shell: |
+        export KUBECONFIG={{ kubeconfig_path }}
+        k3s kubectl apply -f /root/awx-instance.yaml
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Wait for AWX web pod to be Ready (this can take 5-10 minutes)
+      ansible.builtin.shell: |
+        export KUBECONFIG={{ kubeconfig_path }}
+        k3s kubectl -n {{ awx_namespace }} wait --for=condition=Ready pod \
+          -l app.kubernetes.io/name={{ awx_instance_name }}-web --timeout=900s
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Show how to reach AWX
+      ansible.builtin.debug:
+        msg: >-
+          AWX is up. Open http://{{ ansible_host }}:{{ awx_nodeport }}
+          and log in as '{{ awx_admin_user }}'.

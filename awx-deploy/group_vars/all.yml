@@ -1,0 +1,36 @@
+---
+# ------------------------------------------------------------------
+# Non-secret configuration. Safe to commit.
+# ------------------------------------------------------------------
+
+# --- AWX deployment (k3s + AWX Operator) ---
+awx_operator_version: "2.19.1"     # pin to a known-good operator release
+awx_namespace: "awx"
+awx_instance_name: "awx"
+awx_nodeport: 30080                # AWX web UI reachable at http://<server-ip>:30080
+awx_admin_user: "admin"
+
+# --- AWX objects created by configure-awx.yml ---
+awx_organization: "Default"
+awx_inventory_name: "UnitedLex Servers"
+awx_project_name: "UnitedLex Automation"
+awx_credential_name: "UnitedLex SSH"
+awx_job_template_name: "Ping All Servers"
+
+# Git repo that contains playbooks/ping.yml (the AWX Project source).
+# After you push this repo, point this at its clone URL.
+awx_project_scm_url: "https://github.com/nahmad23/awx.git"
+awx_project_scm_branch: "claude/awx-deployment-ping-job-l8k1n1"
+
+# The managed hosts pushed into AWX inventory.
+managed_hosts:
+  - server1.unitedlex.global
+  - server2.unitedlex.global
+  - server3.unitedlex.global
+  - server4.unitedlex.global
+  - server5.unitedlex.global
+  - server6.unitedlex.global
+  - server7.unitedlex.global
+  - server8.unitedlex.global
+  - server9.unitedlex.global
+  - server10.unitedlex.global

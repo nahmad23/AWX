@@ -1,0 +1,4 @@
+# Never commit real secrets
+group_vars/secrets.yml
+*.retry
+.vault_pass

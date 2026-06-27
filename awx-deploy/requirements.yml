@@ -1,0 +1,9 @@
+---
+# Ansible collections required by these playbooks.
+# Install with:  ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: kubernetes.core      # used by the AWX Operator deployment
+    version: ">=3.0.0"
+  - name: awx.awx              # used to configure AWX (inventory, job template, etc.)
+    version: ">=24.0.0"
+  - name: community.general
