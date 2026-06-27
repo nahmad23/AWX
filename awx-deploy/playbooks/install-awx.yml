@@ -11,7 +11,9 @@
 # ==================================================================
 - name: Deploy AWX on Ubuntu (k3s + AWX Operator)
   hosts: awx_server
-  become: true
+  # Escalate only when NOT already root. Driven by ansible_become in the
+  # inventory: false for the root/local case, true when SSHing as a sudo user.
+  become: "{{ ansible_become | default(false) }}"
   vars_files:
     - ../group_vars/all.yml
 
