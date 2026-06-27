@@ -5,6 +5,12 @@
 
 # --- AWX deployment (k3s + AWX Operator) ---
 awx_operator_version: "2.19.1"     # pin to a known-good operator release
+
+# awx-operator 2.19.1 still references gcr.io/kubebuilder/kube-rbac-proxy,
+# which Google retired (image now 404s). Redirect it to the maintained
+# upstream mirror on quay.io. See ansible/awx-operator#2002.
+kube_rbac_proxy_image: "quay.io/brancz/kube-rbac-proxy"
+kube_rbac_proxy_tag: "v0.15.0"
 awx_namespace: "awx"
 awx_instance_name: "awx"
 awx_nodeport: 30080                # AWX web UI reachable at http://<server-ip>:30080
