@@ -1,0 +1,12 @@
+---
+# ------------------------------------------------------------------
+# Copy to vault.yml and encrypt:
+#
+#   cp group_vars/vault.yml.example group_vars/vault.yml
+#   ansible-vault encrypt group_vars/vault.yml
+#
+# vault.yml is git-ignored and must never be committed.
+# ------------------------------------------------------------------
+
+# Password to set for the AWX 'admin' web user (and used on every re-run).
+awx_admin_password: "CHANGE_ME"

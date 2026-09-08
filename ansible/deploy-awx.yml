@@ -1,0 +1,306 @@
+---
+# ==================================================================
+# Deploy AWX on Ubuntu 24.04:
+#   bootstrap -> install k3s -> AWX Operator -> AWX custom resource
+#   -> persistent storage -> Ingress + HTTPS (Traefik + TLS secret)
+#
+# Run (from the server itself, or a control machine that can reach it):
+#   ansible-galaxy is NOT required (uses builtin modules + k3s kubectl).
+#   ansible-playbook deploy-awx.yml -e @group_vars/vault.yml --ask-vault-pass
+#
+# Result: https://<awx_hostname>  (login: admin / <awx_admin_password>)
+# ==================================================================
+- name: Deploy AWX on Ubuntu 24.04 (k3s + AWX Operator + Ingress/HTTPS)
+  hosts: awx_server
+  gather_facts: true
+  become: "{{ ansible_become | default(false) }}"
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+    kube_env: "KUBECONFIG={{ kubeconfig_path }}"
+    manifests_dir: /root/awx-deploy
+
+  tasks:
+    # ============================================================
+    # 1. BOOTSTRAP THE UBUNTU 24.04 SERVER
+    # ============================================================
+    - name: Bootstrap | Warn if the OS is not Ubuntu 24.04
+      ansible.builtin.debug:
+        msg: >-
+          Expected Ubuntu 24.04, found
+          {{ ansible_distribution }} {{ ansible_distribution_version }}.
+          Continuing, but this playbook is validated for 24.04.
+      when: >-
+        ansible_distribution != 'Ubuntu' or
+        ansible_distribution_version is version('24.04', '<')
+
+    - name: Bootstrap | Install base packages
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - openssl
+          - ca-certificates
+          - apt-transport-https
+          - gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Bootstrap | Ensure the manifests directory exists
+      ansible.builtin.file:
+        path: "{{ manifests_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Bootstrap | Resolve awx_hostname locally to this server (/etc/hosts)
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ awx_hostname | regex_escape() }}(\s|$)'
+        line: "{{ ansible_default_ipv4.address }} {{ awx_hostname }}"
+        state: present
+
+    # ============================================================
+    # 2. INSTALL K3S (single-node Kubernetes, keeps Traefik ingress)
+    # ============================================================
+    - name: K3s | Check whether k3s is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_bin
+
+    - name: K3s | Install k3s
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -sfL https://get.k3s.io | \
+          INSTALL_K3S_CHANNEL="{{ k3s_channel }}" \
+          INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+      args:
+        executable: /bin/bash
+      when: not k3s_bin.stat.exists
+      changed_when: true
+
+    - name: K3s | Ensure the k3s service is running and enabled
+      ansible.builtin.service:
+        name: k3s
+        state: started
+        enabled: true
+
+    - name: K3s | Wait for the node to register and become Ready
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ kube_env }} k3s kubectl get nodes --no-headers 2>/dev/null \
+          | awk '$2 == "Ready"' | wc -l
+      args:
+        executable: /bin/bash
+      register: k3s_ready_nodes
+      retries: 30
+      delay: 10
+      until: k3s_ready_nodes.stdout | trim | int > 0
+      changed_when: false
+
+    - name: K3s | Confirm the configured storage class exists
+      ansible.builtin.shell: |
+        {{ kube_env }} k3s kubectl get storageclass {{ storage_class }} -o name
+      args:
+        executable: /bin/bash
+      register: sc_check
+      changed_when: false
+
+    # ============================================================
+    # 3. DEPLOY THE AWX OPERATOR
+    # ============================================================
+    - name: Operator | Create the AWX namespace
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ kube_env }} k3s kubectl create namespace {{ awx_namespace }} \
+          --dry-run=client -o yaml | {{ kube_env }} k3s kubectl apply -f -
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Operator | Render the operator kustomization
+      ansible.builtin.template:
+        src: templates/awx-operator-kustomization.yaml.j2
+        dest: "{{ manifests_dir }}/kustomization.yaml"
+        mode: "0644"
+
+    - name: Operator | Apply the AWX Operator
+      ansible.builtin.shell: |
+        {{ kube_env }} k3s kubectl apply -k {{ manifests_dir }}
+      args:
+        executable: /bin/bash
+      register: operator_apply
+      changed_when: "'created' in operator_apply.stdout or 'configured' in operator_apply.stdout"
+
+    - name: Operator | Wait for the operator to be available (diagnostics on failure)
+      block:
+        - name: Operator | rollout status
+          ansible.builtin.shell: |
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} rollout status \
+              deploy/awx-operator-controller-manager --timeout=600s
+          args:
+            executable: /bin/bash
+          changed_when: false
+      rescue:
+        - name: Operator | Collect diagnostics
+          ansible.builtin.shell: |
+            set -o pipefail
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get pods -o wide
+            echo "----- describe -----"
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} describe pod \
+              -l control-plane=controller-manager | tail -40
+            echo "----- events -----"
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get events \
+              --sort-by=.lastTimestamp | tail -30
+          args:
+            executable: /bin/bash
+          register: operator_diag
+          changed_when: false
+        - name: Operator | Show diagnostics
+          ansible.builtin.debug:
+            var: operator_diag.stdout_lines
+        - name: Operator | Fail with guidance
+          ansible.builtin.fail:
+            msg: >-
+              AWX Operator did not become Ready. Check diagnostics above
+              (ImagePullBackOff / Pending / CrashLoopBackOff). Re-running
+              resumes from here.
+
+    # ============================================================
+    # 4. TLS CERTIFICATE + SECRET (for HTTPS via Ingress)
+    # ============================================================
+    - name: TLS | Check for an existing TLS secret
+      ansible.builtin.shell: |
+        {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get secret {{ awx_tls_secret }} -o name
+      args:
+        executable: /bin/bash
+      register: tls_secret_check
+      failed_when: false
+      changed_when: false
+
+    - name: TLS | Copy a user-provided certificate (if configured)
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0600"
+      loop:
+        - { src: "{{ awx_tls_cert_src }}", dest: "{{ manifests_dir }}/awx-tls.crt" }
+        - { src: "{{ awx_tls_key_src }}", dest: "{{ manifests_dir }}/awx-tls.key" }
+      when:
+        - awx_tls_cert_src | length > 0
+        - awx_tls_key_src | length > 0
+
+    - name: TLS | Generate a self-signed certificate (if none provided)
+      ansible.builtin.shell: |
+        openssl req -x509 -nodes -newkey rsa:2048 \
+          -keyout {{ manifests_dir }}/awx-tls.key \
+          -out {{ manifests_dir }}/awx-tls.crt \
+          -days {{ tls_cert_days }} \
+          -subj "/CN={{ awx_hostname }}/O=UnitedLex" \
+          -addext "subjectAltName=DNS:{{ awx_hostname }}"
+      args:
+        executable: /bin/bash
+        creates: "{{ manifests_dir }}/awx-tls.crt"
+      when:
+        - awx_tls_cert_src | length == 0
+        - tls_secret_check.rc != 0
+
+    - name: TLS | Create/update the TLS secret
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ kube_env }} k3s kubectl -n {{ awx_namespace }} create secret tls {{ awx_tls_secret }} \
+          --cert={{ manifests_dir }}/awx-tls.crt \
+          --key={{ manifests_dir }}/awx-tls.key \
+          --dry-run=client -o yaml | {{ kube_env }} k3s kubectl apply -f -
+      args:
+        executable: /bin/bash
+      when: >-
+        tls_secret_check.rc != 0 or
+        (awx_tls_cert_src | length > 0 and awx_tls_key_src | length > 0)
+      changed_when: true
+
+    # ============================================================
+    # 5. AWX ADMIN PASSWORD SECRET
+    # ============================================================
+    - name: AWX | Create the admin password secret
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ kube_env }} k3s kubectl -n {{ awx_namespace }} create secret generic \
+          {{ awx_instance_name }}-admin-password \
+          --from-literal=password='{{ awx_admin_password }}' \
+          --dry-run=client -o yaml | {{ kube_env }} k3s kubectl apply -f -
+      args:
+        executable: /bin/bash
+      no_log: true
+      changed_when: false
+
+    # ============================================================
+    # 6. CREATE THE AWX CUSTOM RESOURCE
+    # ============================================================
+    - name: AWX | Render the AWX custom resource
+      ansible.builtin.template:
+        src: templates/awx.yaml.j2
+        dest: "{{ manifests_dir }}/awx.yaml"
+        mode: "0644"
+
+    - name: AWX | Apply the AWX custom resource
+      ansible.builtin.shell: |
+        {{ kube_env }} k3s kubectl apply -f {{ manifests_dir }}/awx.yaml
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: AWX | Wait for the AWX web deployment (diagnostics on failure)
+      block:
+        - name: AWX | Poll for the web deployment rollout (can take 5-15 min)
+          ansible.builtin.shell: |
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} rollout status \
+              deploy/{{ awx_instance_name }}-web --timeout=30s
+          args:
+            executable: /bin/bash
+          register: awx_web_rollout
+          retries: 45
+          delay: 20
+          until: awx_web_rollout.rc == 0
+          changed_when: false
+      rescue:
+        - name: AWX | Collect diagnostics
+          ansible.builtin.shell: |
+            set -o pipefail
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get pods -o wide
+            echo "----- pvc -----"
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get pvc
+            echo "----- operator logs (tail) -----"
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} logs \
+              deploy/awx-operator-controller-manager -c awx-manager --tail=40
+            echo "----- events -----"
+            {{ kube_env }} k3s kubectl -n {{ awx_namespace }} get events \
+              --sort-by=.lastTimestamp | tail -30
+          args:
+            executable: /bin/bash
+          register: awx_diag
+          changed_when: false
+        - name: AWX | Show diagnostics
+          ansible.builtin.debug:
+            var: awx_diag.stdout_lines
+        - name: AWX | Fail with guidance
+          ansible.builtin.fail:
+            msg: >-
+              AWX web deployment did not become Ready. Common causes: a PVC
+              stuck Pending (storage), or pods Pending/OOMKilled (needs more
+              RAM -- 8GB recommended). See diagnostics above. Re-running
+              resumes from here.
+
+    # ============================================================
+    # 7. DONE
+    # ============================================================
+    - name: Show access information
+      ansible.builtin.debug:
+        msg:
+          - "AWX is deployed."
+          - "URL:      https://{{ awx_hostname }}"
+          - "Login:    {{ awx_admin_user }}"
+          - "Password: (the awx_admin_password you set in vault.yml)"
+          - "Note: point DNS (or a hosts entry) for {{ awx_hostname }} at {{ ansible_default_ipv4.address }}."
+          - "The self-signed cert will trigger a browser warning unless you supplied your own."

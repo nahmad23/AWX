@@ -1,0 +1,6 @@
+# Never commit real secrets or generated certs
+group_vars/vault.yml
+*.retry
+.vault_pass
+*.key
+*.crt

@@ -1,0 +1,29 @@
+---
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: {{ awx_instance_name }}
+  namespace: {{ awx_namespace }}
+spec:
+  admin_user: {{ awx_admin_user }}
+  admin_password_secret: {{ awx_instance_name }}-admin-password
+
+  # ----- Ingress + HTTPS (terminated by Traefik, the k3s default) -----
+  ingress_type: ingress
+  ingress_class_name: {{ ingress_class_name }}
+  hostname: {{ awx_hostname }}
+  ingress_tls_secret: {{ awx_tls_secret }}
+  ingress_path: /
+  ingress_path_type: Prefix
+
+  # ----- Persistent storage (k3s local-path provisioner, RWO) -----
+  # Postgres PVC uses the cluster default storage class (local-path in k3s).
+  postgres_storage_requirements:
+    requests:
+      storage: {{ postgres_storage_size }}
+  # Project files persistence. local-path is ReadWriteOnce only, so the
+  # access mode MUST be overridden from the AWX default of ReadWriteMany.
+  projects_persistence: true
+  projects_storage_class: {{ storage_class }}
+  projects_storage_size: {{ projects_storage_size }}
+  projects_storage_access_mode: ReadWriteOnce

@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - github.com/ansible/awx-operator/config/default?ref={{ awx_operator_version }}
+images:
+  - name: quay.io/ansible/awx-operator
+    newTag: {{ awx_operator_version }}
+  # Redirect the retired gcr.io/kubebuilder image to a live mirror.
+  - name: gcr.io/kubebuilder/kube-rbac-proxy
+    newName: {{ kube_rbac_proxy_image }}
+    newTag: {{ kube_rbac_proxy_tag }}
+namespace: {{ awx_namespace }}

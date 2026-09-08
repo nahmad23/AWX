@@ -1,0 +1,43 @@
+---
+# ==================================================================
+# Non-secret configuration. Safe to commit.
+# Secrets (awx_admin_password) live in vault.yml -- see vault.yml.example.
+# ==================================================================
+
+# --- Kubernetes / k3s ---
+k3s_channel: "stable"          # k3s install channel
+storage_class: "local-path"    # k3s built-in dynamic provisioner (RWO only)
+
+# --- AWX Operator ---
+awx_operator_version: "2.19.1"
+awx_namespace: "awx"
+awx_instance_name: "awx"
+
+# operator 2.19.1 references the retired gcr.io/kubebuilder/kube-rbac-proxy
+# image (now 404s). Redirect it to the maintained upstream mirror.
+# See ansible/awx-operator#2002.
+kube_rbac_proxy_image: "quay.io/brancz/kube-rbac-proxy"
+kube_rbac_proxy_tag: "v0.15.0"
+
+# --- AWX instance ---
+awx_admin_user: "admin"
+
+# --- Ingress + HTTPS ---
+# Hostname AWX is served on. Must resolve to this server's IP from wherever
+# you browse (add DNS, or a hosts entry). Traefik (k3s default) terminates TLS.
+awx_hostname: "awx.unitedlex.global"
+ingress_class_name: "traefik"
+awx_tls_secret: "awx-tls"
+
+# TLS certificate:
+#   - Leave these empty to auto-generate a self-signed cert for awx_hostname
+#     (correct choice for an internal host with no public DNS).
+#   - Or set both to paths (on the machine running Ansible) of your own
+#     PEM cert and key to use instead.
+awx_tls_cert_src: ""
+awx_tls_key_src: ""
+tls_cert_days: 825
+
+# --- Persistent storage sizes ---
+postgres_storage_size: "8Gi"
+projects_storage_size: "8Gi"
