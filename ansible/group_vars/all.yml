@@ -25,7 +25,7 @@ awx_admin_user: "admin"
 # --- Ingress + HTTPS ---
 # Hostname AWX is served on. Must resolve to this server's IP from wherever
 # you browse (add DNS, or a hosts entry). Traefik (k3s default) terminates TLS.
-awx_hostname: "awx.unitedlex.global"
+awx_hostname: "uxus1sitbawx02.unitedlex.global"
 ingress_class_name: "traefik"
 awx_tls_secret: "awx-tls"
 

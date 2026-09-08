@@ -35,14 +35,14 @@ ansible-playbook deploy-awx.yml -e @group_vars/vault.yml --ask-vault-pass
 The playbook is **idempotent** and **resumable** — if a step fails, fix the
 cause and re-run; it picks up where it left off.
 
-When it finishes: **https://<awx_hostname>** (default `awx.unitedlex.global`),
+When it finishes: **https://<awx_hostname>** (default `uxus1sitbawx02.unitedlex.global`),
 login `admin`.
 
 ## Configuration (`group_vars/all.yml`)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `awx_hostname` | `awx.unitedlex.global` | FQDN AWX is served on (Ingress host). |
+| `awx_hostname` | `uxus1sitbawx02.unitedlex.global` | FQDN AWX is served on (Ingress host). |
 | `awx_operator_version` | `2.19.1` | AWX Operator release. |
 | `storage_class` | `local-path` | k3s dynamic provisioner (ReadWriteOnce). |
 | `postgres_storage_size` / `projects_storage_size` | `8Gi` | PVC sizes. |
@@ -64,7 +64,7 @@ login `admin`.
 
 - The playbook adds a hosts entry **on the server itself**.
 - For your workstation, add DNS or an `/etc/hosts` line:
-  `192.168.27.162  awx.unitedlex.global`
+  `192.168.27.162  uxus1sitbawx02.unitedlex.global`
 
 ## Notes / gotchas baked in
 
