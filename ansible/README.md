@@ -64,7 +64,7 @@ login `admin`.
 
 - The playbook adds a hosts entry **on the server itself**.
 - For your workstation, add DNS or an `/etc/hosts` line:
-  `192.168.27.162  uxus1sitbawx02.unitedlex.global`
+  `<this-server-ip>  uxus1sitbawx02.unitedlex.global`
 
 ## Notes / gotchas baked in
 
