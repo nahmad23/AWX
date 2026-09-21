@@ -1,0 +1,13 @@
+{
+  "azure": {
+    "entity_id": "https://sts.windows.net/<TENANT_ID>/",
+    "url": "https://login.microsoftonline.com/<TENANT_ID>/saml2",
+    "x509cert": "<AZURE_SAML_SIGNING_CERT_BASE64_ONE_LINE_NO_BEGIN_END>",
+    "attr_user_permanent_id": "http://schemas.microsoft.com/identity/claims/objectidentifier",
+    "attr_username": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+    "attr_email": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+    "attr_first_name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname",
+    "attr_last_name": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname",
+    "attr_groups": "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups"
+  }
+}

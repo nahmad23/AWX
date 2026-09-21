@@ -33,3 +33,33 @@ keeping them here is for reference and reproducibility.
 Per IdP you provide: `entity_id`, `url` (IdP SSO URL), `x509cert` (IdP signing
 cert), and attribute mappings (`attr_user_permanent_id`, `attr_email`,
 `attr_first_name`, `attr_last_name`, `attr_username`).
+
+### Azure AD (Microsoft Entra ID)
+
+Template: `enabled_idps.azure.json.example` — copy the `azure` object into
+AWX's **SAML Enabled Identity Providers** field and fill in:
+
+- `<TENANT_ID>` — Directory (tenant) ID.
+- `entity_id` — Azure "Microsoft Entra Identifier" (`https://sts.windows.net/<TENANT_ID>/`).
+- `url` — Azure "Login URL" (`https://login.microsoftonline.com/<TENANT_ID>/saml2`).
+- `x509cert` — the Base64 signing certificate from the Enterprise App, as a
+  single line with the `BEGIN/END` header lines and newlines stripped.
+
+The key `azure` must match the `?idp=azure` in the login URL:
+`https://uxus1sitbawx02.unitedlex.global/sso/login/saml/?idp=azure`
+
+**Azure Enterprise App SAML basic config (must match AWX):**
+- Identifier (Entity ID): `https://uxus1sitbawx02.unitedlex.global`
+- Reply URL (ACS):        `https://uxus1sitbawx02.unitedlex.global/sso/complete/saml/`
+
+## Also required for the backend to activate
+
+- **Base URL of the Service** (Settings -> Miscellaneous System) must be
+  `https://uxus1sitbawx02.unitedlex.global` — otherwise the ACS/metadata URLs
+  show `https://towerhost/...`.
+- All six SP fields non-empty: Entity ID, Public Certificate, Private Key,
+  Organization Info, Technical Contact, Support Contact.
+- At least one entry in Enabled Identity Providers (the Azure block above).
+
+Until all of the above are set, `/sso/metadata/saml/` returns
+`Missing backend "saml" entry`.
